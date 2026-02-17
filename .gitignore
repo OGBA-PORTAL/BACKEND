@@ -22,3 +22,5 @@ logs
 .vscode
 *.swp
 *.swo
+
+/src/generated/prisma
