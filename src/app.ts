@@ -3,7 +3,14 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
-import { env } from './config/env';
+import { env } from './config/env.js';
+import authRoutes from './routes/auth.routes.js';
+import userRoutes from './routes/user.routes.js';
+import churchRoutes from './routes/church.routes.js';
+import rankRoutes from './routes/rank.routes.js';
+import examRoutes from './routes/exam.routes.js';
+import resultRoutes from './routes/result.routes.js';
+import { AppError } from './utils/AppError.js';
 
 const app = express();
 
@@ -22,8 +29,29 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', env: env.NODE_ENV });
 });
 
-// Routes (Placeholder)
-// app.use('/api/auth', authRoutes);
-// app.use('/api/users', userRoutes);
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/churches', churchRoutes);
+app.use('/api/ranks', rankRoutes);
+app.use('/api/exams', examRoutes);
+app.use('/api/results', resultRoutes);
+
+// 404 Handler
+app.all(/(.*)/, (req, res, next) => {
+    next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
+});
+
+// Global Error Handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    err.statusCode = err.statusCode || 500;
+    err.status = err.status || 'error';
+
+    res.status(err.statusCode).json({
+        status: err.status,
+        message: err.message,
+        ...(env.NODE_ENV === 'development' && { stack: err.stack }),
+    });
+});
 
 export default app;
