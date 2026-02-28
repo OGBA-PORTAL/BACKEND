@@ -44,7 +44,8 @@ const seedAdmin = async () => {
             firstName: 'System',
             lastName: 'Admin',
             role: 'SYSTEM_ADMIN',
-            churchId: hqChurchId
+            churchId: hqChurchId,
+            status: 'ACTIVE'
         })
         .select()
         .single();

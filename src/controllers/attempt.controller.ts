@@ -96,7 +96,9 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
                 examTitle: exam.title,
                 duration: exam.duration,
                 questions: questionsForFrontend,
-                resumed: true
+                resumed: true,
+                startedAt: existingAttempt.startedAt,
+                answers: existingAttempt.answers
             }
         });
     }
@@ -169,7 +171,9 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
             attemptId: attempt.id,
             examTitle: exam.title,
             duration: exam.duration,
-            questions: questionsForFrontend
+            questions: questionsForFrontend,
+            startedAt: attempt.startedAt,
+            answers: {}
         }
     });
 });
@@ -243,4 +247,25 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
             percentage: (score / maxScore) * 100
         }
     });
+});
+
+// 3. Start Attempt by URL param (POST /exams/:examId/attempt)
+// Same logic as startAttempt but examId comes from req.params
+export const startAttemptByExamId = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    req.body.examId = req.params.examId;
+    return startAttempt(req, res, next);
+});
+
+export const saveProgress = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { attemptId, answers } = req.body;
+
+    const { error } = await supabase
+        .from('exam_attempts')
+        .update({ answers })
+        .eq('id', attemptId)
+        .eq('status', 'STARTED'); // Only update if started
+
+    if (error) return next(new AppError('Failed to save progress', 500));
+
+    res.status(200).json({ status: 'success' });
 });

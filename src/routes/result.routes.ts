@@ -8,13 +8,14 @@ const router = express.Router();
 router.use(protect);
 
 // --- Student Routes ---
-router.get('/me', resultController.getMyResults);
+router.get('/my', resultController.getMyResults);   // frontend calls /results/my
+router.get('/me', resultController.getMyResults);   // alias
 
 // --- Admin Routes ---
-router.get('/admin', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.getAllResults);
-router.post('/admin/release', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.releaseResults);
+router.get('/', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.getAllResults);
+router.get('/admin', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.getAllResults); // alias
 
-// --- Dashboard ---
+// --- Dashboard Stats ---
 router.get('/dashboard/stats', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), dashboardController.getDashboardStats);
 
 export default router;

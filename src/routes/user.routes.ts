@@ -4,9 +4,17 @@ import * as authMiddleware from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Protect all routes after this middleware
+// Protect all routes
 router.use(authMiddleware.protect);
 
+// --- Current user ---
 router.get('/me', userController.getMe);
+router.patch('/me', userController.updateMe);
+router.patch('/me/password', userController.changeMyPassword);
+
+// --- Admin: list & manage users ---
+// --- Admin: list & manage users ---
+router.get('/', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER', 'CHURCH_ADMIN'), userController.getAllUsers);
+router.patch('/:id/status', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserStatus);
 
 export default router;

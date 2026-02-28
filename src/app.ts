@@ -17,7 +17,9 @@ const app = express();
 // Middleware
 app.use(helmet());
 app.use(cors({
-    origin: env.NODE_ENV === 'production' ? false : '*', // Strict CORS in production
+    origin: env.NODE_ENV === 'production'
+        ? [process.env.FRONTEND_URL || 'https://ogbafrontend.vercel.app']
+        : '*', // Allow Vercel frontend in production
     credentials: true,
 }));
 app.use(morgan('dev'));

@@ -3,9 +3,8 @@ import { supabase } from '../config/supabase.js';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/AppError.js';
 
-// 1. Create Exam (Bank)
+// 1. Create Exam
 export const createExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-    // Only Admin/Assoc can create
     const { title, rankId, duration, passMark, questionCount, description, examDate } = req.body;
 
     const { data: newExam, error } = await supabase
@@ -15,13 +14,13 @@ export const createExam = catchAsync(async (req: Request, res: Response, next: N
             rankId,
             duration,
             passMark,
-            questionCount: questionCount || 50, // Default 50
+            questionCount: questionCount || 50,
             description,
             examDate,
             createdBy: req.user.id,
             status: 'DRAFT'
         })
-        .select()
+        .select('*, ranks(id, name, level)')
         .single();
 
     if (error) return next(new AppError(error.message, 500));
@@ -32,20 +31,10 @@ export const createExam = catchAsync(async (req: Request, res: Response, next: N
     });
 });
 
-// 2. Publish Exam (Validate Question Count)
+// 2. Publish Exam (validate question count)
 export const publishExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
 
-    // Check current exam details
-    const { data: exam, error: fetchError } = await supabase
-        .from('exams')
-        .select('*, questions(count)')
-        .eq('id', id)
-        .single();
-
-    if (fetchError || !exam) return next(new AppError('Exam not found', 404));
-
-    // Count questions
     const { count, error: countError } = await supabase
         .from('questions')
         .select('*', { count: 'exact', head: true })
@@ -53,33 +42,80 @@ export const publishExam = catchAsync(async (req: Request, res: Response, next: 
 
     if (countError) return next(new AppError(countError.message, 500));
 
-    // Validate
+    const { data: exam } = await supabase.from('exams').select('questionCount').eq('id', id).single();
+    if (!exam) return next(new AppError('Exam not found', 404));
+
     if ((count || 0) < (exam.questionCount || 50)) {
-        return next(new AppError(`Cannot publish! Exam has ${count} questions, but requires ${exam.questionCount || 50}.`, 400));
+        return next(new AppError(`Cannot publish! Exam has ${count} questions but requires ${exam.questionCount}.`, 400));
     }
 
-    // Update Access Code ?? Maybe optional.
-    // Update status
     const { data: updated, error: updateError } = await supabase
         .from('exams')
         .update({ status: 'PUBLISHED' })
         .eq('id', id)
-        .select()
+        .select('*, ranks(id, name, level)')
         .single();
 
     if (updateError) return next(new AppError(updateError.message, 500));
 
-    res.status(200).json({
-        status: 'success',
-        data: { exam: updated }
-    });
+    res.status(200).json({ status: 'success', data: { exam: updated } });
 });
 
-// 3. Get All Exams (Admin View)
+// 3. Update Exam Status (PATCH /exams/:id/status)
+export const updateExamStatus = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!['DRAFT', 'PUBLISHED', 'COMPLETED'].includes(status)) {
+        return next(new AppError('Invalid status', 400));
+    }
+
+    // If publishing, validate question count
+    if (status === 'PUBLISHED') {
+        const { count } = await supabase
+            .from('questions')
+            .select('*', { count: 'exact', head: true })
+            .eq('examId', id);
+
+        const { data: exam } = await supabase.from('exams').select('questionCount').eq('id', id).single();
+        if (exam && (count || 0) < (exam.questionCount || 1)) {
+            return next(new AppError(`Cannot publish! Exam has ${count} questions but requires ${exam.questionCount}.`, 400));
+        }
+    }
+
+    const { data: updated, error } = await supabase
+        .from('exams')
+        .update({ status })
+        .eq('id', id)
+        .select('*, ranks(id, name, level)')
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({ status: 'success', data: { exam: updated } });
+});
+
+// 4. Release Results for a specific exam (PATCH /exams/:id/release)
+export const releaseExamResults = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    const { data: updated, error } = await supabase
+        .from('exams')
+        .update({ resultsReleased: true })
+        .eq('id', id)
+        .select('*, ranks(id, name, level)')
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({ status: 'success', data: { exam: updated } });
+});
+
+// 5. Get All Exams (Admin View)
 export const getAllExams = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { data: exams, error } = await supabase
         .from('exams')
-        .select('*, ranks(name), questions(count)')
+        .select('*, ranks(id, name, level)')
         .order('createdAt', { ascending: false });
 
     if (error) return next(new AppError(error.message, 500));
@@ -91,19 +127,33 @@ export const getAllExams = catchAsync(async (req: Request, res: Response, next: 
     });
 });
 
-// 4. Get Single Exam (Admin View)
+// 6. Get Published Exams (Student View)
+export const getPublishedExams = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { data: exams, error } = await supabase
+        .from('exams')
+        .select('*, ranks(id, name, level)')
+        .eq('status', 'PUBLISHED')
+        .order('createdAt', { ascending: false });
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({
+        status: 'success',
+        results: exams.length,
+        data: { exams }
+    });
+});
+
+// 7. Get Single Exam
 export const getExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
     const { data: exam, error } = await supabase
         .from('exams')
-        .select('*, ranks(name)')
+        .select('*, ranks(id, name, level)')
         .eq('id', id)
         .single();
 
     if (error) return next(new AppError('Exam not found', 404));
 
-    res.status(200).json({
-        status: 'success',
-        data: { exam }
-    });
+    res.status(200).json({ status: 'success', data: { exam } });
 });
