@@ -23,12 +23,10 @@ export const getDashboardStats = catchAsync(async (req: Request, res: Response, 
     res.status(200).json({
         status: 'success',
         data: {
-            stats: {
-                totalRAs: userCount || 0,
-                totalChurches: churchCount || 0,
-                activeExams: examCount || 0,
-                examsTaken: attemptCount || 0
-            }
+            totalRAs: userCount || 0,
+            totalChurches: churchCount || 0,
+            activeExams: examCount || 0,
+            examsTaken: attemptCount || 0
         }
     });
 });

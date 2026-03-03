@@ -19,20 +19,29 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
     const { examId } = req.body;
     const userId = req.user.id;
 
-    // Check if exam exists and is PUBLISHED
+    // Check if exam exists and is PUBLISHED, and join its rank level
     const { data: exam, error: examError } = await supabase
         .from('exams')
-        .select('*')
+        .select('*, ranks(level)')
         .eq('id', examId)
         .single();
 
     if (examError || !exam) return next(new AppError('Exam not found', 404));
     if (exam.status !== 'PUBLISHED') return next(new AppError('Exam is not active', 400));
 
-    // Check eligibility (Rank)
-    if (exam.rankId && req.user.rankId !== exam.rankId) {
-        // Optional: strict rank check. 
-        // return next(new AppError('You are not eligible for this exam', 403));
+    // Check eligibility (Rank Progression: User must take the exam for UserRankLevel + 1)
+    if (exam.rankId && exam.ranks && typeof (exam.ranks as any).level === 'number') {
+        const examRankLevel = (exam.ranks as any).level;
+        let userRankLevel = 0; // Default 0 for new members
+
+        if (req.user.rankId) {
+            const { data: userRank } = await supabase.from('ranks').select('level').eq('id', req.user.rankId).single();
+            if (userRank) userRankLevel = userRank.level;
+        }
+
+        if (examRankLevel > userRankLevel + 1) {
+            return next(new AppError(`You are not eligible. Your current rank level is ${userRankLevel}, but this exam requires you to be taking Level ${examRankLevel}.`, 403));
+        }
     }
 
     // Check if attempt already exists
@@ -76,8 +85,9 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
 
         // Prepare response (Shuffle Options again for security)
         const questionsForFrontend = orderedQuestions.map(q => {
-            const opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-            const optionsWithId = opts.map((opt: string, index: number) => ({ id: index, text: opt }));
+            let opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+            if (typeof opts === 'string') opts = JSON.parse(opts);
+            const optionsWithId = Array.isArray(opts) ? opts.map((opt: string, index: number) => ({ id: index, text: opt })) : [];
             const shuffledOptions = shuffleArray(optionsWithId);
 
             return {
@@ -148,10 +158,11 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
 
     const questionsForFrontend = selectedQuestions.map(q => {
         // Parse options if string, else assume array
-        const opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+        let opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+        if (typeof opts === 'string') opts = JSON.parse(opts);
 
         // Map to objects with original index
-        const optionsWithId = opts.map((opt: string, index: number) => ({ id: index, text: opt }));
+        const optionsWithId = Array.isArray(opts) ? opts.map((opt: string, index: number) => ({ id: index, text: opt })) : [];
 
         // Shuffle options
         const shuffledOptions = shuffleArray(optionsWithId);

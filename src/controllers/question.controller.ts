@@ -86,10 +86,17 @@ export const getExamQuestions = catchAsync(async (req: Request, res: Response, n
 
     if (error) return next(new AppError(error.message, 500));
 
+    const parsedQuestions = questions.map((q: any) => {
+        let opts = q.options;
+        if (typeof opts === 'string') opts = JSON.parse(opts);
+        if (typeof opts === 'string') opts = JSON.parse(opts); // Handle double-stringified
+        return { ...q, options: Array.isArray(opts) ? opts : [] };
+    });
+
     res.status(200).json({
         status: 'success',
-        results: questions.length,
-        data: { questions }
+        results: parsedQuestions.length,
+        data: { questions: parsedQuestions }
     });
 });
 
