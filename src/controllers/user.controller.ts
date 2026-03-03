@@ -111,6 +111,18 @@ export const updateUserStatus = catchAsync(async (req: Request, res: Response, n
         return next(new AppError('Invalid status value', 400));
     }
 
+    if (id === req.user.id) {
+        return next(new AppError('You cannot change your own status', 403));
+    }
+
+    // Prevent non-System Admins from modifying System Admins
+    if (req.user.role !== 'SYSTEM_ADMIN') {
+        const { data: targetUser } = await supabase.from('users').select('role').eq('id', id).single();
+        if (targetUser && targetUser.role === 'SYSTEM_ADMIN') {
+            return next(new AppError('You do not have permission to modify a System Admin', 403));
+        }
+    }
+
     const { data: updated, error } = await supabase
         .from('users')
         .update({ status })
