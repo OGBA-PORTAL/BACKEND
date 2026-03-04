@@ -29,7 +29,38 @@ export class AuthService {
         // 2) Generate RA Number
         const raNumber = await generateRaNumber(userData.churchId);
 
-        // 3) Hash password
+        // 3) Duplicate name guard — reject if same name (or reversed) already exists in this church
+        const first = userData.firstName.trim();
+        const last = userData.lastName.trim();
+
+        // Check normal order: John Doe
+        const { data: forwardMatch } = await supabase
+            .from('users')
+            .select('id, raNumber, firstName, lastName')
+            .eq('churchId', userData.churchId)
+            .ilike('firstName', first)
+            .ilike('lastName', last)
+            .limit(1);
+
+        // Check reversed order: Doe John (in case they swap first/last)
+        const { data: reverseMatch } = await supabase
+            .from('users')
+            .select('id, raNumber, firstName, lastName')
+            .eq('churchId', userData.churchId)
+            .ilike('firstName', last)
+            .ilike('lastName', first)
+            .limit(1);
+
+        const existingDuplicate = (forwardMatch?.[0]) ?? (reverseMatch?.[0]) ?? null;
+
+        if (existingDuplicate) {
+            throw new AppError(
+                `A member named "${existingDuplicate.firstName} ${existingDuplicate.lastName}" already exists in this church (RA No: ${existingDuplicate.raNumber}). If this is a different person, please contact a System Admin.`,
+                409
+            );
+        }
+
+        // 4) Hash password
         const hashedPassword = await bcrypt.hash(userData.password, 12);
 
         // 4) Create user
@@ -63,7 +94,7 @@ export class AuthService {
         // 2) Check if user exists
         const { data: user, error } = await supabase
             .from('users')
-            .select('*') // We need password to compare
+            .select('*, ranks(id, name, level), churches(id, name, code)') // We need password to compare, plus relations for UI
             .eq('raNumber', raNumber)
             .single();
 

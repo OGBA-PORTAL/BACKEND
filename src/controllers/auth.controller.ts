@@ -40,8 +40,9 @@ export const signup = catchAsync(async (req: Request, res: Response, next: NextF
         if (req.body.churchId && req.body.churchId !== req.user.churchId) {
             return next(new AppError('Church Admins can only register users for their own church', 403));
         }
-        // Force their church ID
+        // Force their church ID and lock role to RA — Church Admins cannot create elevated accounts
         req.body.churchId = req.user.churchId;
+        req.body.role = 'RA';
     }
 
     // Enforce Rank for RAs (if not creating an Admin)
