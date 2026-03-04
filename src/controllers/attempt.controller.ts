@@ -27,7 +27,20 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
         .single();
 
     if (examError || !exam) return next(new AppError('Exam not found', 404));
+    if (exam.status === 'PAUSED') return next(new AppError('This exam is currently paused by an administrator. Please wait.', 403));
     if (exam.status !== 'PUBLISHED') return next(new AppError('Exam is not active', 400));
+
+    // Check exam date — prevent starting if date is in the future
+    if (exam.examDate) {
+        const examDate = new Date(exam.examDate);
+        examDate.setHours(0, 0, 0, 0); // Start of exam day
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (examDate > today) {
+            const formatted = examDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
+            return next(new AppError(`This exam is not yet open. It will be available on ${formatted}.`, 403));
+        }
+    }
 
     // Check eligibility (Rank Progression: User must take the exam for UserRankLevel + 1)
     if (exam.rankId && exam.ranks && typeof (exam.ranks as any).level === 'number') {
@@ -196,11 +209,12 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
     // Fetch attempt
     const { data: attempt, error: fetchError } = await supabase
         .from('exam_attempts')
-        .select('*')
+        .select('*, exams(status)')
         .eq('id', attemptId)
         .single();
 
     if (fetchError || !attempt) return next(new AppError('Attempt not found', 404));
+    if (attempt?.exams?.status === 'PAUSED') return next(new AppError('This exam is currently paused by an administrator. You cannot submit right now.', 403));
     if (attempt.status === 'SUBMITTED') return next(new AppError('Attempt already submitted', 400));
 
     // Calculate Score
@@ -263,6 +277,8 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
 // 3. Start Attempt by URL param (POST /exams/:examId/attempt)
 // Same logic as startAttempt but examId comes from req.params
 export const startAttemptByExamId = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    // req.body may be undefined if the POST had no JSON body — guard against that
+    if (!req.body || typeof req.body !== 'object') req.body = {};
     req.body.examId = req.params.examId;
     return startAttempt(req, res, next);
 });

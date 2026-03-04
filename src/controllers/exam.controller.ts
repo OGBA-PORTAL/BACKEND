@@ -66,7 +66,7 @@ export const updateExamStatus = catchAsync(async (req: Request, res: Response, n
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!['DRAFT', 'PUBLISHED', 'COMPLETED'].includes(status)) {
+    if (!['DRAFT', 'PUBLISHED', 'COMPLETED', 'PAUSED'].includes(status)) {
         return next(new AppError('Invalid status', 400));
     }
 
@@ -131,16 +131,25 @@ export const getAllExams = catchAsync(async (req: Request, res: Response, next: 
 export const getPublishedExams = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { data: exams, error } = await supabase
         .from('exams')
-        .select('*, ranks(id, name, level)')
-        .eq('status', 'PUBLISHED')
+        .select('*, ranks(id, name, level), exam_attempts(count)')
+        .in('status', ['PUBLISHED', 'PAUSED'])
         .order('createdAt', { ascending: false });
 
     if (error) return next(new AppError(error.message, 500));
 
+    // Flatten the attempt count into a plain number
+    const examsWithCount = (exams ?? []).map((exam: any) => ({
+        ...exam,
+        attemptCount: Array.isArray(exam.exam_attempts)
+            ? (exam.exam_attempts[0]?.count ?? 0)
+            : 0,
+        exam_attempts: undefined,
+    }));
+
     res.status(200).json({
         status: 'success',
-        results: exams.length,
-        data: { exams }
+        results: examsWithCount.length,
+        data: { exams: examsWithCount }
     });
 });
 
@@ -156,4 +165,28 @@ export const getExam = catchAsync(async (req: Request, res: Response, next: Next
     if (error) return next(new AppError('Exam not found', 404));
 
     res.status(200).json({ status: 'success', data: { exam } });
+});
+
+// 8. Delete Exam (cascades questions + attempts)
+export const deleteExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    // Verify exam exists first
+    const { data: exam, error: findError } = await supabase
+        .from('exams')
+        .select('id, title')
+        .eq('id', id)
+        .single();
+
+    if (findError || !exam) return next(new AppError('Exam not found', 404));
+
+    // Delete child records first (FK constraints)
+    await supabase.from('questions').delete().eq('examId', id);
+    await supabase.from('exam_attempts').delete().eq('examId', id);
+
+    // Delete the exam
+    const { error: deleteError } = await supabase.from('exams').delete().eq('id', id);
+    if (deleteError) return next(new AppError(deleteError.message, 500));
+
+    res.status(200).json({ status: 'success', message: `Exam "${exam.title}" has been deleted.` });
 });
