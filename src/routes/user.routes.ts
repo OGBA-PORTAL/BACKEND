@@ -16,5 +16,7 @@ router.patch('/me/password', userController.changeMyPassword);
 // --- Admin: list & manage users ---
 router.get('/', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER', 'CHURCH_ADMIN'), userController.getAllUsers);
 router.patch('/:id/status', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserStatus);
+router.delete('/:id', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.deleteUser);
+router.patch('/:id/role', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserRole);
 
 export default router;

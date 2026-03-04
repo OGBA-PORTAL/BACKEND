@@ -137,3 +137,100 @@ export const updateUserStatus = catchAsync(async (req: Request, res: Response, n
         data: { user: updated },
     });
 });
+
+// DELETE /users/:id — Admin: permanently delete a user (with strict hierarchy)
+export const deleteUser = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    if (id === req.user.id) {
+        return next(new AppError('You cannot delete your own account', 403));
+    }
+
+    // Fetch the target user's role
+    const { data: targetUser, error: fetchError } = await supabase
+        .from('users')
+        .select('id, raNumber, firstName, lastName, role')
+        .eq('id', id)
+        .single();
+
+    if (fetchError || !targetUser) return next(new AppError('User not found', 404));
+
+    const callerRole = req.user.role;
+    const targetRole = targetUser.role;
+
+    // Hierarchy enforcement
+    const allowedDeletions: Record<string, string[]> = {
+        SYSTEM_ADMIN: ['ASSOCIATION_OFFICER', 'CHURCH_ADMIN', 'RA'],
+        ASSOCIATION_OFFICER: ['CHURCH_ADMIN', 'RA'],
+        CHURCH_ADMIN: [],
+    };
+
+    const permitted = allowedDeletions[callerRole] ?? [];
+    if (!permitted.includes(targetRole)) {
+        return next(new AppError(`You do not have permission to delete a ${targetRole.replace(/_/g, ' ')}`, 403));
+    }
+
+    const { error: deleteError } = await supabase.from('users').delete().eq('id', id);
+    if (deleteError) return next(new AppError(deleteError.message, 500));
+
+    res.status(200).json({
+        status: 'success',
+        message: `Account for ${targetUser.firstName} ${targetUser.lastName} has been permanently deleted.`,
+    });
+});
+
+// PATCH /users/:id/role — Admin: upgrade or downgrade a user's role
+export const updateUserRole = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { role: newRole } = req.body;
+
+    const validRoles = ['RA', 'CHURCH_ADMIN', 'ASSOCIATION_OFFICER'];
+    if (!validRoles.includes(newRole)) {
+        return next(new AppError('Invalid role. Cannot assign SYSTEM_ADMIN via this endpoint.', 400));
+    }
+
+    if (id === req.user.id) {
+        return next(new AppError('You cannot change your own role', 403));
+    }
+
+    const { data: targetUser, error: fetchErr } = await supabase
+        .from('users')
+        .select('id, firstName, lastName, role')
+        .eq('id', id)
+        .single();
+
+    if (fetchErr || !targetUser) return next(new AppError('User not found', 404));
+
+    const callerRole = req.user.role;
+    const currentRole = targetUser.role;
+
+    // Roles each caller can manage
+    const manageable: Record<string, string[]> = {
+        SYSTEM_ADMIN: ['RA', 'CHURCH_ADMIN', 'ASSOCIATION_OFFICER'],
+        ASSOCIATION_OFFICER: ['RA', 'CHURCH_ADMIN'],
+        CHURCH_ADMIN: [],
+    };
+
+    const allowed = manageable[callerRole] ?? [];
+
+    if (!allowed.includes(currentRole)) {
+        return next(new AppError(`You cannot change the role of a ${currentRole.replace(/_/g, ' ')}`, 403));
+    }
+    if (!allowed.includes(newRole)) {
+        return next(new AppError(`You cannot assign the role ${newRole.replace(/_/g, ' ')}`, 403));
+    }
+
+    const { data: updated, error } = await supabase
+        .from('users')
+        .update({ role: newRole })
+        .eq('id', id)
+        .select('id, raNumber, firstName, lastName, role')
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({
+        status: 'success',
+        data: { user: updated },
+    });
+});
