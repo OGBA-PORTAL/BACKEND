@@ -10,6 +10,7 @@ import churchRoutes from './routes/church.routes.js';
 import rankRoutes from './routes/rank.routes.js';
 import examRoutes from './routes/exam.routes.js';
 import resultRoutes from './routes/result.routes.js';
+import reportRoutes from './routes/report.routes.js'; // NEW
 import { AppError } from './utils/AppError.js';
 
 const app = express();
@@ -38,6 +39,7 @@ app.use('/api/churches', churchRoutes);
 app.use('/api/ranks', rankRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/results', resultRoutes);
+app.use('/api/reports', reportRoutes); // NEW
 
 // 404 Handler
 app.all(/(.*)/, (req, res, next) => {

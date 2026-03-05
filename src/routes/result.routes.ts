@@ -13,7 +13,10 @@ router.get('/me', resultController.getMyResults);   // alias
 
 // --- Admin Routes ---
 router.get('/', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.getAllResults);
+router.get('/church', restrictTo('CHURCH_ADMIN'), resultController.getChurchResults);
 router.get('/admin', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.getAllResults); // alias
+router.get('/:id', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER', 'CHURCH_ADMIN'), resultController.getDetailedResult);
+router.delete('/:id', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), resultController.deleteResult);
 
 // --- Dashboard Stats ---
 router.get('/dashboard/stats', restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), dashboardController.getDashboardStats);

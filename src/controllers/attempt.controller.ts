@@ -267,9 +267,7 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
     res.status(200).json({
         status: 'success',
         data: {
-            score,
-            totalPoints: maxScore,
-            percentage: (score / maxScore) * 100
+            message: 'Exam submitted successfully for grading.'
         }
     });
 });

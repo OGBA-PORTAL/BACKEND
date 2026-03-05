@@ -62,6 +62,13 @@ export const changeMyPassword = catchAsync(async (req: Request, res: Response, n
     res.status(200).json({ status: 'success', message: 'Password updated successfully' });
 });
 
+const roleHierarchy: Record<string, number> = {
+    'SYSTEM_ADMIN': 4,
+    'ASSOCIATION_OFFICER': 3,
+    'CHURCH_ADMIN': 2,
+    'RA': 1
+};
+
 // GET /users — Admin: list all users (Scoped by Role)
 export const getAllUsers = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     let query = supabase
@@ -102,6 +109,76 @@ export const getAllUsers = catchAsync(async (req: Request, res: Response, next: 
     });
 });
 
+// PATCH /users/bulk-status — Admin: bulk update users status
+export const bulkUpdateStatus = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { userIds, status } = req.body;
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+        return next(new AppError('No user IDs provided', 400));
+    }
+
+    if (!['ACTIVE', 'SUSPENDED'].includes(status)) {
+        return next(new AppError('Invalid status value', 400));
+    }
+
+    const { data: targetUsers, error: fetchErr } = await supabase
+        .from('users')
+        .select('id, role, churchId, status_updated_by, status')
+        .in('id', userIds);
+
+    if (fetchErr) return next(new AppError(fetchErr.message, 500));
+
+    const myRoleLevel = roleHierarchy[req.user.role];
+
+    // Fetch updaters to enforce hierarchy locks
+    const updaterIds = [...new Set(targetUsers.map(u => u.status_updated_by).filter(Boolean))];
+    const updatersMap: Record<string, string> = {};
+    if (updaterIds.length > 0) {
+        const { data: updaters } = await supabase.from('users').select('id, role').in('id', updaterIds);
+        updaters?.forEach(u => { updatersMap[u.id] = u.role; });
+    }
+
+    // Filter down to the safe IDs
+    const safeUserIds = targetUsers
+        .filter(u => u.id !== req.user.id) // Prevent self
+        .filter(u => u.status !== status) // ** Skip users already in the desired state **
+        .filter(u => {
+            // Cannot target higher or equal roles
+            if (roleHierarchy[u.role] >= myRoleLevel) return false;
+
+            // Check if user's status was locked by a higher authority
+            if (u.status_updated_by && updatersMap[u.status_updated_by]) {
+                const updatedByRoleLevel = roleHierarchy[updatersMap[u.status_updated_by]];
+                if (updatedByRoleLevel > myRoleLevel) return false;
+            }
+            return true;
+        })
+        .map(u => u.id);
+
+    if (safeUserIds.length === 0) {
+        return res.status(200).json({
+            status: 'success',
+            message: 'No safe targets found for status update (users are either already updated, system admins, or locked by higher admins).',
+            data: { updatedCount: 0 }
+        });
+    }
+
+    // Execute the bulk update for only safe IDs
+    const { data: updated, error } = await supabase
+        .from('users')
+        .update({ status, status_updated_by: req.user.id })
+        .in('id', safeUserIds)
+        .select('id, status');
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({
+        status: 'success',
+        message: `Successfully ${status === 'ACTIVE' ? 'activated' : 'suspended'} ${safeUserIds.length} users.`,
+        data: { updatedCount: safeUserIds.length, ignoredCount: userIds.length - safeUserIds.length }
+    });
+});
+
 // PATCH /users/:id/status — Admin: activate or suspend
 export const updateUserStatus = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
@@ -115,17 +192,37 @@ export const updateUserStatus = catchAsync(async (req: Request, res: Response, n
         return next(new AppError('You cannot change your own status', 403));
     }
 
-    // Prevent non-System Admins from modifying System Admins
-    if (req.user.role !== 'SYSTEM_ADMIN') {
-        const { data: targetUser } = await supabase.from('users').select('role').eq('id', id).single();
-        if (targetUser && targetUser.role === 'SYSTEM_ADMIN') {
-            return next(new AppError('You do not have permission to modify a System Admin', 403));
+    const { data: targetUser, error: fetchErr } = await supabase
+        .from('users')
+        .select('id, role, churchId, status_updated_by')
+        .eq('id', id)
+        .single();
+
+    if (fetchErr || !targetUser) return next(new AppError('User not found', 404));
+
+    const myRoleLevel = roleHierarchy[req.user.role];
+
+    // Church admin scope check
+    if (req.user.role === 'CHURCH_ADMIN' && targetUser.churchId !== req.user.churchId) {
+        return next(new AppError('You can only update members of your own church', 403));
+    }
+
+    // Role hierarchy check
+    if (roleHierarchy[targetUser.role] >= myRoleLevel) {
+        return next(new AppError('You cannot update the status of this user role', 403));
+    }
+
+    // Previous updater lock check
+    if (targetUser.status_updated_by) {
+        const { data: updater } = await supabase.from('users').select('role').eq('id', targetUser.status_updated_by).single();
+        if (updater && roleHierarchy[updater.role] > myRoleLevel) {
+            return next(new AppError('Hierarchical Lock: This user\'s status was managed by a higher-level administrator and cannot be overridden by you.', 403));
         }
     }
 
     const { data: updated, error } = await supabase
         .from('users')
-        .update({ status })
+        .update({ status, status_updated_by: req.user.id })
         .eq('id', id)
         .select('id, raNumber, firstName, lastName, status')
         .single();

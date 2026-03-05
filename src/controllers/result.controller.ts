@@ -50,6 +50,40 @@ export const getAllResults = catchAsync(async (req: Request, res: Response, next
     });
 });
 
+// 1.5 Get Church Results (Church Admin View)
+export const getChurchResults = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { examId } = req.query;
+    const churchId = req.user.churchId;
+
+    if (!churchId) {
+        return next(new AppError('You do not belong to a church.', 403));
+    }
+
+    let query = supabase
+        .from('exam_attempts')
+        .select(`
+            *,
+            users:userId!inner (firstName, lastName, raNumber, churchId, rankId),
+            exams:examId!inner (title, passMark, resultsReleased)
+        `)
+        .eq('users.churchId', churchId)
+        .eq('exams.resultsReleased', true)
+        .eq('status', 'SUBMITTED')
+        .order('score', { ascending: false });
+
+    if (examId) query = query.eq('examId', examId);
+
+    const { data: results, error } = await query;
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({
+        status: 'success',
+        results: results.length,
+        data: { results }
+    });
+});
+
 // 2. Get My Results (Student View)
 export const getMyResults = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const userId = req.user.id;
@@ -66,15 +100,21 @@ export const getMyResults = catchAsync(async (req: Request, res: Response, next:
 
     if (error) return next(new AppError(error.message, 500));
 
-    // Filter out scores if results NOT released
+    // Obscure scores and pass/fail logic if results are NOT released
     const sanitizedResults = attempts.map(attempt => {
-        const isReleased = (attempt.exams as any)?.resultsReleased;
+        if (attempt.exams && attempt.exams.resultsReleased) {
+            return {
+                ...attempt,
+                statusDisplay: attempt.passed ? 'Passed' : 'Failed'
+            };
+        }
+
         return {
             ...attempt,
-            score: isReleased ? attempt.score : null,
-            totalPoints: isReleased ? attempt.totalPoints : null,
-            passed: isReleased ? (attempt.score >= (attempt.exams as any).passMark) : null,
-            statusDisplay: isReleased ? (attempt.score >= (attempt.exams as any).passMark ? 'PASSED' : 'FAILED') : 'SUBMITTED (Pending Release)'
+            score: null,          // Hidden
+            totalPoints: null,    // Hidden
+            passed: null,         // Hidden
+            statusDisplay: 'Submitted'
         };
     });
 
@@ -111,5 +151,131 @@ export const releaseResults = catchAsync(async (req: Request, res: Response, nex
     res.status(200).json({
         status: 'success',
         data: { exam }
+    });
+});
+
+// 4. Delete Result / Exam Attempt (Admin Action)
+export const deleteResult = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    // Verify it exists first
+    const { data: existingAttempt, error: findError } = await supabase
+        .from('exam_attempts')
+        .select('id, userId, examId')
+        .eq('id', id)
+        .single();
+
+    if (findError || !existingAttempt) {
+        return next(new AppError('Attempt not found', 404));
+    }
+
+    // Delete the attempt
+    const { error: deleteError } = await supabase
+        .from('exam_attempts')
+        .delete()
+        .eq('id', id);
+
+    if (deleteError) return next(new AppError(deleteError.message, 500));
+
+    // Audit Log
+    await logAudit({
+        userId: req.user.id,
+        action: 'DELETE_RESULT',
+        resource: 'exam_attempts',
+        resourceId: id as string,
+        req
+    });
+
+    res.status(204).json({
+        status: 'success',
+        data: null
+    });
+});
+
+// 5. Get Detailed Result Breakdown (Admin Action)
+export const getDetailedResult = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    // Fetch the attempt with related user and exam info
+    const { data: attempt, error: attemptError } = await supabase
+        .from('exam_attempts')
+        .select(`
+            *,
+            users:userId (firstName, lastName, raNumber, churchId),
+            exams:examId (title, passMark, questionCount, duration, resultsReleased)
+        `)
+        .eq('id', id)
+        .single();
+
+    if (attemptError || !attempt) {
+        return next(new AppError('Attempt not found', 404));
+    }
+
+    // Role-based Access Control
+    if (req.user.role === 'CHURCH_ADMIN') {
+        if (attempt.users?.churchId !== req.user.churchId) {
+            return next(new AppError('You are not authorized to view this result.', 403));
+        }
+        if (!attempt.exams?.resultsReleased) {
+            return next(new AppError('This result has not been released yet.', 403));
+        }
+    }
+
+    const questionIds = attempt.questions || [];
+    const studentAnswers = attempt.answers || {};
+
+    if (questionIds.length === 0) {
+        return res.status(200).json({
+            status: 'success',
+            data: { attempt, questions: [] }
+        });
+    }
+
+    // Fetch the actual questions to get text, options, and correctOption
+    const { data: questions, error: qError } = await supabase
+        .from('questions')
+        .select('id, text, options, correctOption, points')
+        .in('id', questionIds);
+
+    if (qError || !questions) {
+        return next(new AppError('Failed to fetch exam questions', 500));
+    }
+
+    // Format the questions to include what the student picked
+    const detailedQuestions = questions.map(q => {
+        let parsedOptions = [];
+        try {
+            parsedOptions = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+            if (typeof parsedOptions === 'string') parsedOptions = JSON.parse(parsedOptions);
+        } catch (e) {
+            console.error('Error parsing options:', e);
+        }
+
+        const optionsWithIndex = Array.isArray(parsedOptions)
+            ? parsedOptions.map((optText, index) => ({ id: index, text: optText }))
+            : [];
+
+        const studentAnswerId = studentAnswers[q.id] !== undefined ? studentAnswers[q.id] : null;
+        const isCorrect = studentAnswerId === q.correctOption;
+
+        return {
+            id: q.id,
+            text: q.text,
+            options: optionsWithIndex,
+            correctOptionId: q.correctOption,
+            studentAnswerId: studentAnswerId,
+            isCorrect,
+            pointsText: `${isCorrect ? q.points : 0}/${q.points}`,
+            pointsAchieved: isCorrect ? q.points : 0,
+            pointsMax: q.points
+        };
+    });
+
+    res.status(200).json({
+        status: 'success',
+        data: {
+            attempt,
+            questions: detailedQuestions
+        }
     });
 });
