@@ -34,6 +34,10 @@ export const protect = catchAsync(async (req: Request, res: Response, next: Next
         return next(new AppError('The user belonging to this token no longer does exist.', 401));
     }
 
+    if (currentUser.status === 'SUSPENDED') {
+        return next(new AppError('Your account has been suspended. Please contact the administration.', 401));
+    }
+
     // 4) Check if user changed password after the token was issued
     if (currentUser.passwordChangedAt) {
         const changedTimestamp = parseInt(

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/AppError.js';
 import { authService } from '../services/auth.service.js';
+import { NotificationService } from '../services/notification.service.js';
 import { env } from '../config/env.js';
 
 const signToken = (id: string) => {
@@ -45,12 +46,17 @@ export const signup = catchAsync(async (req: Request, res: Response, next: NextF
         req.body.role = 'RA';
     }
 
-    // Enforce Rank for RAs (if not creating an Admin)
-    // Assuming this endpoint is mostly for creating RAs.
-    // If the role being created is RA (default), rankId should be present.
-    // For now, we don't strictly enforce it here to allow flexibility, but it SHOULD be sent.
-
     const newUser = await authService.signup(req.body);
+
+    if (newUser.churchId) {
+        NotificationService.notifyChurchAdmins(
+            newUser.churchId,
+            'New Member Registration',
+            `${newUser.firstName} ${newUser.lastName} has just registered as a member.`,
+            'SUCCESS'
+        );
+    }
+
     createSendToken(newUser, 201, res);
 });
 
