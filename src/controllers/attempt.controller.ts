@@ -209,7 +209,7 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
     // Fetch attempt
     const { data: attempt, error: fetchError } = await supabase
         .from('exam_attempts')
-        .select('*, exams(status)')
+        .select('*, exams(status, passMark)')
         .eq('id', attemptId)
         .single();
 
@@ -218,7 +218,7 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
     if (attempt.status === 'SUBMITTED') return next(new AppError('Attempt already submitted', 400));
 
     // Calculate Score
-    let score = 0;
+    let rawScore = 0;
     let totalPoints = 0;
 
     // Fetch the actual questions that were assigned to this attempt
@@ -240,23 +240,26 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
         if (question) {
             totalPoints += question.points;
             if (question.correctOption === selectedOption) {
-                score += question.points;
+                rawScore += question.points;
             }
         }
     }
 
     // Calculate total possible points (sum of all assigned questions)
     const maxScore = questions.reduce((sum, q) => sum + q.points, 0);
+    const percentageScore = maxScore > 0 ? Math.round((rawScore / maxScore) * 100) : 0;
+    const passed = percentageScore >= (attempt.exams?.passMark || 0);
 
     // Update Attempt
     const { data: updatedAttempt, error: updateError } = await supabase
         .from('exam_attempts')
         .update({
-            score,
+            score: percentageScore,
             totalPoints: maxScore,
             status: 'SUBMITTED',
             submittedAt: new Date().toISOString(),
-            answers // Store user answers
+            answers, // Store user answers
+            passed   // explicit pass/fail column boolean
         })
         .eq('id', attemptId)
         .select()
