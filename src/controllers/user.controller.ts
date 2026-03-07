@@ -130,13 +130,8 @@ export const bulkUpdateStatus = catchAsync(async (req: Request, res: Response, n
 
     const myRoleLevel = roleHierarchy[req.user.role];
 
-    // Fetch updaters to enforce hierarchy locks
-    const updaterIds = [...new Set(targetUsers.map(u => u.status_updated_by).filter(Boolean))];
-    const updatersMap: Record<string, string> = {};
-    if (updaterIds.length > 0) {
-        const { data: updaters } = await supabase.from('users').select('id, role').in('id', updaterIds);
-        updaters?.forEach(u => { updatersMap[u.id] = u.role; });
-    }
+    // Fetch updaters to enforce hierarchy locks (removed per user request to enable assoc admin updates)
+    // ...
 
     // Filter down to the safe IDs
     const safeUserIds = targetUsers
@@ -145,12 +140,6 @@ export const bulkUpdateStatus = catchAsync(async (req: Request, res: Response, n
         .filter(u => {
             // Cannot target higher or equal roles
             if (roleHierarchy[u.role] >= myRoleLevel) return false;
-
-            // Check if user's status was locked by a higher authority
-            if (u.status_updated_by && updatersMap[u.status_updated_by]) {
-                const updatedByRoleLevel = roleHierarchy[updatersMap[u.status_updated_by]];
-                if (updatedByRoleLevel > myRoleLevel) return false;
-            }
             return true;
         })
         .map(u => u.id);
@@ -210,14 +199,6 @@ export const updateUserStatus = catchAsync(async (req: Request, res: Response, n
     // Role hierarchy check
     if (roleHierarchy[targetUser.role] >= myRoleLevel) {
         return next(new AppError('You cannot update the status of this user role', 403));
-    }
-
-    // Previous updater lock check
-    if (targetUser.status_updated_by) {
-        const { data: updater } = await supabase.from('users').select('role').eq('id', targetUser.status_updated_by).single();
-        if (updater && roleHierarchy[updater.role] > myRoleLevel) {
-            return next(new AppError('Hierarchical Lock: This user\'s status was managed by a higher-level administrator and cannot be overridden by you.', 403));
-        }
     }
 
     const { data: updated, error } = await supabase
