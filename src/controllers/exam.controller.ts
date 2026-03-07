@@ -7,6 +7,19 @@ import { AppError } from '../utils/AppError.js';
 export const createExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { title, rankId, duration, passMark, questionCount, description, examDate } = req.body;
 
+    // Check if an exam already exists for this rank
+    const { data: existingExam, error: checkError } = await supabase
+        .from('exams')
+        .select('id, title')
+        .eq('rankId', rankId)
+        .single();
+
+    // supabase .single() returns an error PGRST116 if no rows are found, which is what we want (no existing exam).
+    // If it *did* find a row, it means an exam already exists.
+    if (existingExam) {
+        return next(new AppError(`An exam for this rank already exists ("${existingExam.title}"). Please delete the existing exam before creating a new one for this rank.`, 400));
+    }
+
     const { data: newExam, error } = await supabase
         .from('exams')
         .insert({

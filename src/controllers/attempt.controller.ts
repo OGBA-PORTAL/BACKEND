@@ -141,8 +141,8 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
     // 2. Shuffle Questions
     const shuffledQuestions = shuffleArray([...allQuestions]);
 
-    // 3. Pick N Questions (e.g. 50)
-    const countToPick = exam.questionCount || 50;
+    // 3. Pick N Questions (e.g. 35)
+    const countToPick = exam.questionCount || 35;
     const selectedQuestions = shuffledQuestions.slice(0, countToPick);
 
     // 4. Store IDs in Attempt (Freeze the set)
