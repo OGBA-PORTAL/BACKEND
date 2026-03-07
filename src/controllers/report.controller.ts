@@ -34,17 +34,22 @@ export const getGlobalReport = catchAsync(async (req: Request, res: Response, ne
         }
 
         const group = report[churchName][examTitle][rankName];
+        // Compute pass/fail live from score vs passMark (avoids relying on stale `passed` column)
+        const didPass = a.score !== null && a.exams?.passMark !== undefined
+            ? a.score >= a.exams.passMark
+            : (a.passed ?? false);
+
         group.members.push({
             attemptId: a.id,
             name: `${a.users.firstName} ${a.users.lastName}`,
             raNumber: a.users.raNumber,
             score: a.score,
-            passed: a.passed,
+            passed: didPass,
             date: a.submittedAt
         });
 
         group.stats.total++;
-        if (a.passed) group.stats.passed++;
+        if (didPass) group.stats.passed++;
         else group.stats.failed++;
         group.stats.totalScore += (a.score || 0);
         group.stats.avgScore = Math.round(group.stats.totalScore / group.stats.total);
@@ -86,17 +91,22 @@ export const getChurchReport = catchAsync(async (req: Request, res: Response, ne
         }
 
         const group = report[examTitle][rankName];
+        // Compute pass/fail live from score vs passMark (avoids relying on stale `passed` column)
+        const didPass = a.score !== null && a.exams?.passMark !== undefined
+            ? a.score >= a.exams.passMark
+            : (a.passed ?? false);
+
         group.members.push({
             attemptId: a.id,
             name: `${a.users.firstName} ${a.users.lastName}`,
             raNumber: a.users.raNumber,
             score: a.score,
-            passed: a.passed,
+            passed: didPass,
             date: a.submittedAt
         });
 
         group.stats.total++;
-        if (a.passed) group.stats.passed++;
+        if (didPass) group.stats.passed++;
         else group.stats.failed++;
         group.stats.totalScore += (a.score || 0);
         group.stats.avgScore = Math.round(group.stats.totalScore / group.stats.total);
