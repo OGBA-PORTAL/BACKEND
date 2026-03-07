@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase.js';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/AppError.js';
 import bcrypt from 'bcrypt';
+import { NotificationService } from '../services/notification.service.js';
 
 // GET /users/me
 export const getMe = (req: Request, res: Response) => {
@@ -210,6 +211,14 @@ export const updateUserStatus = catchAsync(async (req: Request, res: Response, n
 
     if (error) return next(new AppError(error.message, 500));
 
+    const isSuspended = status === 'SUSPENDED';
+    NotificationService.notifyUser({
+        userId: id as string,
+        title: isSuspended ? 'Account Suspended' : 'Account Activated',
+        message: isSuspended ? 'Your account has been suspended by an administrator.' : 'Your account is now active.',
+        type: isSuspended ? 'ALERT' : 'SUCCESS'
+    });
+
     res.status(200).json({
         status: 'success',
         data: { user: updated },
@@ -307,8 +316,85 @@ export const updateUserRole = catchAsync(async (req: Request, res: Response, nex
 
     if (error) return next(new AppError(error.message, 500));
 
+    NotificationService.notifyUser({
+        userId: id as string,
+        title: 'Role Updated',
+        message: `Your account role has been updated to ${newRole.replace(/_/g, ' ')}.`,
+        type: 'INFO'
+    });
+
     res.status(200).json({
         status: 'success',
         data: { user: updated },
+    });
+});
+
+// PATCH /users/:id/admin — Admin: Update a member's Name and Rank
+export const updateUserAdmin = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { firstName, lastName, rankId } = req.body;
+
+    if (id === req.user.id) {
+        return next(new AppError('Please use your own profile settings to update your information.', 400));
+    }
+
+    // Fetch the target user's role
+    const { data: targetUser, error: fetchError } = await supabase
+        .from('users')
+        .select('id, role')
+        .eq('id', id)
+        .single();
+
+    if (fetchError || !targetUser) return next(new AppError('User not found', 404));
+
+    const callerRole = req.user.role;
+    const targetRole = targetUser.role;
+
+    // Hierarchy enforcement
+    const manageable: Record<string, string[]> = {
+        SYSTEM_ADMIN: ['RA', 'CHURCH_ADMIN', 'ASSOCIATION_OFFICER'],
+        ASSOCIATION_OFFICER: ['RA', 'CHURCH_ADMIN'],
+        CHURCH_ADMIN: [],
+    };
+
+    const permitted = manageable[callerRole] ?? [];
+    if (!permitted.includes(targetRole)) {
+        return next(new AppError(`You do not have permission to edit a ${targetRole.replace(/_/g, ' ')}'s profile`, 403));
+    }
+
+    // Build update payload
+    const updateData: any = {};
+    if (firstName) updateData.firstName = firstName;
+    if (lastName) updateData.lastName = lastName;
+    if (rankId !== undefined) updateData.rankId = rankId;
+
+    if (Object.keys(updateData).length === 0) {
+        return res.status(200).json({ status: 'success', message: 'No changes provided.' });
+    }
+
+    const { data: updated, error: updateError } = await supabase
+        .from('users')
+        .update(updateData)
+        .eq('id', id)
+        .select(`
+            id, raNumber, firstName, lastName, role, status, churchId, rankId, createdAt,
+            churches (id, name, code),
+            ranks (id, name, level)
+        `)
+        .single();
+
+    if (updateError) return next(new AppError(updateError.message, 500));
+
+    NotificationService.notifyUser({
+        userId: id as string,
+        title: 'Profile Record Updated',
+        message: 'Your registration details or rank were modified by an administrator.',
+        type: 'INFO'
+    });
+
+    res.status(200).json({
+        status: 'success',
+        message: 'Profile updated successfully.',
+        data: { user: updated }
     });
 });

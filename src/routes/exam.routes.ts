@@ -38,6 +38,16 @@ router
     .route('/:id/release')
     .patch(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.releaseExamResults);
 
+// Retract results for a specific exam
+router
+    .route('/:id/retract')
+    .patch(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.retractExamResults);
+
+// Get specific exam status (allow RA so students can poll it)
+router
+    .route('/:id/status')
+    .get(examController.getExamStatus);
+
 // --- Question Management ---
 router
     .route('/:examId/questions')

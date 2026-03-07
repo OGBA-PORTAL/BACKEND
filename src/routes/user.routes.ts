@@ -19,5 +19,6 @@ router.patch('/bulk-status', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIAT
 router.patch('/:id/status', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserStatus);
 router.delete('/:id', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.deleteUser);
 router.patch('/:id/role', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserRole);
+router.patch('/:id/admin', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserAdmin);
 
 export default router;

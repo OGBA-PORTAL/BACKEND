@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { supabase } from '../config/supabase.js';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/AppError.js';
+import { NotificationService } from '../services/notification.service.js';
 
 // 1. Create Exam
 export const createExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -121,7 +122,54 @@ export const releaseExamResults = catchAsync(async (req: Request, res: Response,
 
     if (error) return next(new AppError(error.message, 500));
 
+    // Notify all participants
+    const { data: participants } = await supabase
+        .from('exam_attempts')
+        .select('userId')
+        .eq('examId', id);
+
+    if (participants && participants.length > 0) {
+        const userIds = [...new Set(participants.map(p => p.userId))];
+        NotificationService.notifyUsers(
+            userIds,
+            'Exam Results Released',
+            `The results for ${updated.title} have been published. Check your Dashboard.`,
+            'INFO'
+        );
+    }
+
     res.status(200).json({ status: 'success', data: { exam: updated } });
+});
+
+// 4b. Retract Results for a specific exam (PATCH /exams/:id/retract)
+export const retractExamResults = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    const { data: updated, error } = await supabase
+        .from('exams')
+        .update({ resultsReleased: false })
+        .eq('id', id)
+        .select('*, ranks(id, name, level)')
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({ status: 'success', data: { exam: updated } });
+});
+
+// 4c. Get Exam Status specifically (GET /exams/:id/status)
+export const getExamStatus = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+
+    const { data: exam, error } = await supabase
+        .from('exams')
+        .select('status, resultsReleased')
+        .eq('id', id)
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+
+    res.status(200).json({ status: 'success', data: { exam } });
 });
 
 // 5. Get All Exams (Admin View)
