@@ -172,6 +172,48 @@ export const getExamStatus = catchAsync(async (req: Request, res: Response, next
     res.status(200).json({ status: 'success', data: { exam } });
 });
 
+// 4d. Handle Security Breach (POST /exams/:id/breach)
+export const handleSecurityBreach = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const userId = req.user!.id; // Authenticated user
+
+    // 1. Fail the active exam attempt
+    const { data: activeAttempt, error: attemptError } = await supabase
+        .from('exam_attempts')
+        .update({ status: 'SUBMITTED', score: 0 })
+        .eq('examId', id)
+        .eq('userId', userId)
+        .eq('status', 'IN_PROGRESS')
+        .select()
+        .single();
+
+    if (attemptError && attemptError.code !== 'PGRST116') { // PGRST116 = no rows, which is fine if they weren't in progress
+        return next(new AppError('Failed to lock exam attempt', 500));
+    }
+
+    // 2. Suspend the user account globally
+    const { data: updatedUser, error: suspendError } = await supabase
+        .from('users')
+        .update({ status: 'SUSPENDED' })
+        .eq('id', userId)
+        .select()
+        .single();
+
+    if (suspendError) return next(new AppError('Failed to suspend account', 500));
+
+    // 3. Notify Admins
+    if (updatedUser.churchId) {
+        NotificationService.notifyChurchAdmins(
+            updatedUser.churchId,
+            'Security Violation: Student Suspended',
+            `${updatedUser.firstName} ${updatedUser.lastName} was automatically suspended for repeated tab-switching violations during an exam.`,
+            'ALERT'
+        );
+    }
+
+    res.status(200).json({ status: 'success', message: 'Account suspended due to security violation.' });
+});
+
 // 5. Get All Exams (Admin View)
 export const getAllExams = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { data: exams, error } = await supabase

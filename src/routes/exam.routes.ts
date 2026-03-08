@@ -48,6 +48,11 @@ router
     .route('/:id/status')
     .get(examController.getExamStatus);
 
+// Post security violation breach from frontend
+router
+    .route('/:id/breach')
+    .post(examController.handleSecurityBreach);
+
 // --- Question Management ---
 router
     .route('/:examId/questions')

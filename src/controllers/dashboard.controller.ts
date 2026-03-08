@@ -18,17 +18,20 @@ export const getDashboardStats = catchAsync(async (req: Request, res: Response, 
         supabase.from('churches').select('*', { count: 'exact', head: true }),
         supabase.from('exams').select('*', { count: 'exact', head: true }).eq('status', 'PUBLISHED'),
         supabase.from('exam_attempts').select('*', { count: 'exact', head: true }).eq('status', 'SUBMITTED'),
-        supabase.from('users').select('rankId, ranks:rankId(id, name, level)').eq('role', 'RA').not('rankId', 'is', null)
+        supabase.from('users').select('rankId, ranks:rankId(id, name, level)').in('role', ['RA', 'CHURCH_ADMIN'])
     ]);
 
     // Build rank breakdown: group RA users by rank
     const rankMap: Record<string, { id: string; name: string; level: number; count: number }> = {};
     (rankBreakdownData || []).forEach((u: any) => {
-        if (u.ranks) {
-            const r = u.ranks;
-            if (!rankMap[r.id]) rankMap[r.id] = { id: r.id, name: r.name, level: r.level, count: 0 };
-            rankMap[r.id].count++;
+        const id = u.ranks?.id || 'unranked';
+        const name = u.ranks?.name || 'N/A (Candidate)';
+        const level = u.ranks?.level ?? 0;
+
+        if (!rankMap[id]) {
+            rankMap[id] = { id, name, level, count: 0 };
         }
+        rankMap[id].count++;
     });
     const rankBreakdown = Object.values(rankMap).sort((a, b) => a.level - b.level);
 
