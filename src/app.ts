@@ -20,7 +20,7 @@ const app = express();
 app.use(helmet());
 app.use(cors({
     origin: env.NODE_ENV === 'production'
-        ? [process.env.FRONTEND_URL || 'https://ogbafrontend.vercel.app']
+        ? [process.env.FRONTEND_URL || 'https://ogbafrontend.vercel.app', 'https://raogba.org', 'https://www.raogba.org']
         : '*', // Allow Vercel frontend in production
     credentials: true,
 }));
