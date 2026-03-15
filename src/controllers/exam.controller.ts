@@ -59,8 +59,15 @@ export const publishExam = catchAsync(async (req: Request, res: Response, next: 
     const { data: exam } = await supabase.from('exams').select('questionCount').eq('id', id).single();
     if (!exam) return next(new AppError('Exam not found', 404));
 
-    if ((count || 0) < (exam.questionCount || 50)) {
-        return next(new AppError(`Cannot publish! Exam has ${count} questions but requires ${exam.questionCount}.`, 400));
+    // 2. Validate Question Quantity limits
+    // The pool MUST have at least 50 questions
+    // The pool MUST have AT LEAST as many questions as the exam intends to naturally disburse to students
+    const actualCount = count || 0;
+    if (actualCount < 50) {
+        return next(new AppError(`Cannot publish! The Question Pool only has ${actualCount} questions but requires a minimum of 50.`, 400));
+    }
+    if (actualCount < exam.questionCount) {
+        return next(new AppError(`Cannot publish! Exam is configured to disburse ${exam.questionCount} questions to students, but the pool only has ${actualCount} available.`, 400));
     }
 
     const { data: updated, error: updateError } = await supabase
@@ -92,8 +99,14 @@ export const updateExamStatus = catchAsync(async (req: Request, res: Response, n
             .eq('examId', id);
 
         const { data: exam } = await supabase.from('exams').select('questionCount').eq('id', id).single();
-        if (exam && (count || 0) < (exam.questionCount || 1)) {
-            return next(new AppError(`Cannot publish! Exam has ${count} questions but requires ${exam.questionCount}.`, 400));
+        if (!exam) return next(new AppError('Exam metadata missing', 404));
+
+        const actualCount = count || 0;
+        if (actualCount < 50) {
+            return next(new AppError(`Cannot publish! The Question Pool only has ${actualCount} questions but requires a minimum of 50.`, 400));
+        }
+        if (actualCount < exam.questionCount) {
+            return next(new AppError(`Cannot publish! Exam is configured to disburse ${exam.questionCount} questions to students, but the pool only has ${actualCount} available.`, 400));
         }
     }
 
@@ -292,4 +305,31 @@ export const deleteExam = catchAsync(async (req: Request, res: Response, next: N
     if (deleteError) return next(new AppError(deleteError.message, 500));
 
     res.status(200).json({ status: 'success', message: `Exam "${exam.title}" has been deleted.` });
+});
+
+// 9. Update Exam Details
+export const updateExam = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { title, duration, passMark, questionCount, description, examDate, rankId } = req.body;
+
+    const updatePayload: any = {};
+    if (title !== undefined) updatePayload.title = title;
+    if (duration !== undefined) updatePayload.duration = duration;
+    if (passMark !== undefined) updatePayload.passMark = passMark;
+    if (questionCount !== undefined) updatePayload.questionCount = questionCount;
+    if (description !== undefined) updatePayload.description = description;
+    if (examDate !== undefined) updatePayload.examDate = examDate;
+    if (rankId !== undefined) updatePayload.rankId = rankId;
+
+    const { data: updated, error } = await supabase
+        .from('exams')
+        .update(updatePayload)
+        .eq('id', id)
+        .select('*, ranks(id, name, level)')
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+    if (!updated) return next(new AppError('Exam not found', 404));
+
+    res.status(200).json({ status: 'success', data: { exam: updated } });
 });

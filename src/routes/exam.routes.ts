@@ -21,6 +21,7 @@ router
 router
     .route('/:id')
     .get(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.getExam)
+    .patch(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.updateExam)
     .delete(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.deleteExam);
 
 // Publish via status PATCH (frontend sends PATCH /exams/:id/status)
