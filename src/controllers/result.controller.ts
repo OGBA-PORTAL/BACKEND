@@ -88,15 +88,14 @@ export const getChurchResults = catchAsync(async (req: Request, res: Response, n
 export const getMyResults = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const userId = req.user.id;
 
-    // Fetch attempts
+    // Fetch attempts (both active and submitted)
     const { data: attempts, error } = await supabase
         .from('exam_attempts')
         .select(`
             *,
             exams:examId (title, passMark, resultsReleased)
         `)
-        .eq('userId', userId)
-        .eq('status', 'SUBMITTED');
+        .eq('userId', userId);
 
     if (error) return next(new AppError(error.message, 500));
 

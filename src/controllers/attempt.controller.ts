@@ -98,8 +98,19 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
 
         // Prepare response (Shuffle Options again for security)
         const questionsForFrontend = orderedQuestions.map(q => {
-            let opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-            if (typeof opts === 'string') opts = JSON.parse(opts);
+            // Safely parse options whether they are an array or stringified JSON
+            let opts = q.options;
+            if (typeof opts === 'string') {
+                try {
+                    opts = JSON.parse(opts);
+                    // Handle double-encoded strings just in case
+                    if (typeof opts === 'string') opts = JSON.parse(opts);
+                } catch (e) {
+                    console.error(`Error parsing options for question ${q.id}:`, e);
+                    opts = [];
+                }
+            }
+
             const optionsWithId = Array.isArray(opts) ? opts.map((opt: string, index: number) => ({ id: index, text: opt })) : [];
             const shuffledOptions = shuffleArray(optionsWithId);
 
@@ -112,12 +123,20 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
             };
         });
 
+        // Calculate remaining seconds robustly on the server
+        const nowMs = new Date().getTime();
+        const startMs = new Date(existingAttempt.startedAt).getTime();
+        const diffSecs = Math.floor((nowMs - startMs) / 1000);
+        const durationSecs = (exam.duration || 60) * 60;
+        const timeLeftSeconds = Math.max(0, durationSecs - diffSecs);
+
         return res.status(200).json({
             status: 'success',
             data: {
                 attemptId: existingAttempt.id,
                 examTitle: exam.title,
                 duration: exam.duration,
+                timeLeftSeconds, // Use this for timer logic
                 questions: questionsForFrontend,
                 resumed: true,
                 startedAt: existingAttempt.startedAt,
@@ -170,9 +189,18 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
     // Better: Send options as objects { id: 0, text: "A" }, { id: 1, text: "B" } shuffled.
 
     const questionsForFrontend = selectedQuestions.map(q => {
-        // Parse options if string, else assume array
-        let opts = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
-        if (typeof opts === 'string') opts = JSON.parse(opts);
+        // Safely parse options whether they are an array or stringified JSON
+        let opts = q.options;
+        if (typeof opts === 'string') {
+            try {
+                opts = JSON.parse(opts);
+                // Handle double-encoded strings just in case
+                if (typeof opts === 'string') opts = JSON.parse(opts);
+            } catch (e) {
+                console.error(`Error parsing options for question ${q.id}:`, e);
+                opts = [];
+            }
+        }
 
         // Map to objects with original index
         const optionsWithId = Array.isArray(opts) ? opts.map((opt: string, index: number) => ({ id: index, text: opt })) : [];
@@ -189,12 +217,15 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
         };
     });
 
+    const durationSecs = (exam.duration || 60) * 60;
+
     res.status(201).json({
         status: 'success',
         data: {
             attemptId: attempt.id,
             examTitle: exam.title,
             duration: exam.duration,
+            timeLeftSeconds: durationSecs, // Full time
             questions: questionsForFrontend,
             startedAt: attempt.startedAt,
             answers: {}
@@ -258,8 +289,7 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
             totalPoints: maxScore,
             status: 'SUBMITTED',
             submittedAt: new Date().toISOString(),
-            answers, // Store user answers
-            passed   // explicit pass/fail column boolean
+            answers // Store user answers
         })
         .eq('id', attemptId)
         .select()
