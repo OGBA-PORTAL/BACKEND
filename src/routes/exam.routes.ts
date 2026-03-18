@@ -18,6 +18,12 @@ router
     .get(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.getAllExams)
     .post(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.createExam);
 
+// --- Student Attempt Routes ---
+// POST /exams/:examId/attempt is dynamic, but these exact paths must be first
+router.patch('/save', restrictTo('RA'), attemptController.saveProgress);
+router.post('/submit', restrictTo('RA'), attemptController.submitAttempt);
+router.post('/start', attemptController.startAttempt); // Legacy
+
 router
     .route('/:id')
     .get(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), examController.getExam)
@@ -68,14 +74,8 @@ router
     .route('/:examId/questions/:id')
     .delete(restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), questionController.deleteQuestion);
 
-// --- Student Attempt Routes ---
+// --- Student Attempt Routes (Dynamic) ---
 // POST /exams/:examId/attempt — start or resume
-// Student Attempt Routes
 router.post('/:examId/attempt', restrictTo('RA'), attemptController.startAttemptByExamId);
-router.patch('/save', restrictTo('RA'), attemptController.saveProgress);
-router.post('/submit', restrictTo('RA'), attemptController.submitAttempt);
-
-// Legacy routes
-router.post('/start', attemptController.startAttempt);
 
 export default router;
