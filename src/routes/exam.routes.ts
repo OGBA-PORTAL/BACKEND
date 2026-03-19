@@ -20,8 +20,8 @@ router
 
 // --- Student Attempt Routes ---
 // POST /exams/:examId/attempt is dynamic, but these exact paths must be first
-router.patch('/save', restrictTo('RA'), attemptController.saveProgress);
-router.post('/submit', restrictTo('RA'), attemptController.submitAttempt);
+router.patch('/save', restrictTo('RA', 'CHURCH_ADMIN', 'ASSOCIATION_OFFICER', 'SYSTEM_ADMIN'), attemptController.saveProgress);
+router.post('/submit', restrictTo('RA', 'CHURCH_ADMIN', 'ASSOCIATION_OFFICER', 'SYSTEM_ADMIN'), attemptController.submitAttempt);
 router.post('/start', attemptController.startAttempt); // Legacy
 
 router
@@ -76,6 +76,6 @@ router
 
 // --- Student Attempt Routes (Dynamic) ---
 // POST /exams/:examId/attempt — start or resume
-router.post('/:examId/attempt', restrictTo('RA', 'CHURCH_ADMIN'), attemptController.startAttemptByExamId);
+router.post('/:examId/attempt', restrictTo('RA', 'CHURCH_ADMIN', 'ASSOCIATION_OFFICER', 'SYSTEM_ADMIN'), attemptController.startAttemptByExamId);
 
 export default router;
