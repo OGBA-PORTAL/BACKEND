@@ -52,8 +52,8 @@ export const startAttempt = catchAsync(async (req: Request, res: Response, next:
             if (userRank) userRankLevel = userRank.level;
         }
 
-        if (examRankLevel > userRankLevel + 1) {
-            return next(new AppError(`You are not eligible. Your current rank level is ${userRankLevel}, but this exam requires you to be taking Level ${examRankLevel}.`, 403));
+        if (examRankLevel !== userRankLevel + 1) {
+            return next(new AppError(`You are only eligible to take the promotional exam for your exact next rank (Level ${userRankLevel + 1}).`, 403));
         }
     }
 

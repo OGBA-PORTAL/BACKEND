@@ -76,6 +76,6 @@ router
 
 // --- Student Attempt Routes (Dynamic) ---
 // POST /exams/:examId/attempt — start or resume
-router.post('/:examId/attempt', restrictTo('RA'), attemptController.startAttemptByExamId);
+router.post('/:examId/attempt', restrictTo('RA', 'CHURCH_ADMIN'), attemptController.startAttemptByExamId);
 
 export default router;

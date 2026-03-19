@@ -12,7 +12,7 @@ export const getAllResults = catchAsync(async (req: Request, res: Response, next
         .from('exam_attempts')
         .select(`
             *,
-            users:userId (firstName, lastName, raNumber, churchId, rankId),
+            users:userId (firstName, lastName, raNumber, churchId, rankId, churches:churchId(name)),
             exams:examId (title, passMark)
         `)
         .eq('status', 'SUBMITTED')
@@ -30,7 +30,7 @@ export const getAllResults = catchAsync(async (req: Request, res: Response, next
             .from('exam_attempts')
             .select(`
                 *,
-                users:userId!inner (firstName, lastName, raNumber, churchId, rankId),
+                users:userId!inner (firstName, lastName, raNumber, churchId, rankId, churches:churchId(name)),
                 exams:examId (title, passMark)
             `)
             .eq('users.churchId', churchId)
@@ -63,7 +63,7 @@ export const getChurchResults = catchAsync(async (req: Request, res: Response, n
         .from('exam_attempts')
         .select(`
             *,
-            users:userId!inner (firstName, lastName, raNumber, churchId, rankId),
+            users:userId!inner (firstName, lastName, raNumber, churchId, rankId, churches:churchId(name)),
             exams:examId!inner (title, passMark, resultsReleased)
         `)
         .eq('users.churchId', churchId)
@@ -200,8 +200,8 @@ export const getDetailedResult = catchAsync(async (req: Request, res: Response, 
         .from('exam_attempts')
         .select(`
             *,
-            users:userId (firstName, lastName, raNumber, churchId),
-            exams:examId (title, passMark, questionCount, duration, resultsReleased)
+            users:userId (firstName, lastName, raNumber, churchId, ranks:rankId(name, level)),
+            exams:examId (title, passMark, questionCount, duration, resultsReleased, ranks:rankId(name, level))
         `)
         .eq('id', id)
         .single();
@@ -213,6 +213,13 @@ export const getDetailedResult = catchAsync(async (req: Request, res: Response, 
     // Role-based Access Control
     if (req.user.role === 'CHURCH_ADMIN') {
         if (attempt.users?.churchId !== req.user.churchId) {
+            return next(new AppError('You are not authorized to view this result.', 403));
+        }
+        if (!attempt.exams?.resultsReleased) {
+            return next(new AppError('This result has not been released yet.', 403));
+        }
+    } else if (req.user.role === 'RA') {
+        if (attempt.userId !== req.user.id) {
             return next(new AppError('You are not authorized to view this result.', 403));
         }
         if (!attempt.exams?.resultsReleased) {

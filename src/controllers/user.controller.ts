@@ -79,6 +79,7 @@ export const getAllUsers = catchAsync(async (req: Request, res: Response, next: 
             churches (id, name, code),
             ranks (id, name, level)
         `)
+        .limit(10000)
         .order('createdAt', { ascending: false });
 
     // 1. Church Admin: Strict Local Scope
@@ -111,61 +112,97 @@ export const getAllUsers = catchAsync(async (req: Request, res: Response, next: 
 });
 
 // PATCH /users/bulk-status — Admin: bulk update users status
+// Accepts { status, churchId? } criteria — backend queries users directly to avoid large URL payloads
 export const bulkUpdateStatus = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-    const { userIds, status } = req.body;
-
-    if (!Array.isArray(userIds) || userIds.length === 0) {
-        return next(new AppError('No user IDs provided', 400));
-    }
+    const { status, churchId } = req.body;
 
     if (!['ACTIVE', 'SUSPENDED'].includes(status)) {
         return next(new AppError('Invalid status value', 400));
     }
 
-    const { data: targetUsers, error: fetchErr } = await supabase
-        .from('users')
-        .select('id, role, churchId, status_updated_by, status')
-        .in('id', userIds);
-
-    if (fetchErr) return next(new AppError(fetchErr.message, 500));
-
     const myRoleLevel = roleHierarchy[req.user.role];
 
-    // Fetch updaters to enforce hierarchy locks (removed per user request to enable assoc admin updates)
-    // ...
+    // Determine which roles this admin can target
+    const targetableRoles = Object.entries(roleHierarchy)
+        .filter(([, level]) => level < myRoleLevel)
+        .map(([role]) => role);
 
-    // Filter down to the safe IDs
-    const safeUserIds = targetUsers
-        .filter(u => u.id !== req.user.id) // Prevent self
-        .filter(u => u.status !== status) // ** Skip users already in the desired state **
-        .filter(u => {
-            // Cannot target higher or equal roles
-            if (roleHierarchy[u.role] >= myRoleLevel) return false;
-            return true;
-        })
-        .map(u => u.id);
+    if (targetableRoles.length === 0) {
+        return next(new AppError('You do not have permission to bulk-update any users.', 403));
+    }
 
-    if (safeUserIds.length === 0) {
+    // Build the query on the backend
+    let query = supabase
+        .from('users')
+        .select('id, role, status')
+        .in('role', targetableRoles)
+        .neq('id', req.user.id)
+        .neq('status', status) // Skip users already in the desired state
+        .limit(10000);
+
+    // If a churchId is provided, scope to that church only
+    if (churchId) {
+        query = query.eq('churchId', churchId);
+    } else if (req.user.role === 'ASSOCIATION_OFFICER') {
+        // Association officers cannot do global updates without a churchId
+        return next(new AppError('Association officers must specify a church for bulk updates.', 403));
+    }
+
+    const { data: targetUsers, error: fetchErr } = await query;
+
+    if (fetchErr) {
+        return next(new AppError(fetchErr.message, 500));
+    }
+    if (!targetUsers || targetUsers.length === 0) {
         return res.status(200).json({
             status: 'success',
-            message: 'No safe targets found for status update (users are either already updated, system admins, or locked by higher admins).',
+            message: 'No users found to update (they may already be in the desired state).',
             data: { updatedCount: 0 }
         });
     }
 
-    // Execute the bulk update for only safe IDs
-    const { data: updated, error } = await supabase
-        .from('users')
-        .update({ status, status_updated_by: req.user.id })
-        .in('id', safeUserIds)
-        .select('id, status');
+    const safeUserIds = targetUsers.map(u => u.id);
 
-    if (error) return next(new AppError(error.message, 500));
+    // Chunk size to avoid "URL Too Long" in Supabase REST client
+    // 50 UUIDs * 36 chars = ~1.8KB query string, well within limits
+    const CHUNK_SIZE = 50; 
+    
+    for (let i = 0; i < safeUserIds.length; i += CHUNK_SIZE) {
+        const chunk = safeUserIds.slice(i, i + CHUNK_SIZE);
+        
+        // Execute the bulk update for this chunk
+        const { error } = await supabase
+            .from('users')
+            .update({ status, status_updated_by: req.user.id })
+            .in('id', chunk);
+
+        if (error) {
+            console.error(`[bulkUpdateStatus] Chunk failing at index ${i}:`, JSON.stringify(error));
+            return next(new AppError(error.message, 500));
+        }
+    }
+
+    // Fire notifications asynchronously in chunks — do not block response
+    const isSuspended = status === 'SUSPENDED';
+    const notifyTitle = isSuspended ? 'Account Suspended' : 'Account Activated';
+    const notifyMessage = isSuspended ? 'Your account has been suspended by an administrator.' : 'Your account is now active.';
+    const notifyType = isSuspended ? 'ALERT' : 'SUCCESS';
+
+    const notifyPromises = [];
+    for (let i = 0; i < safeUserIds.length; i += CHUNK_SIZE) {
+        const chunk = safeUserIds.slice(i, i + CHUNK_SIZE);
+        notifyPromises.push(
+            NotificationService.notifyUsers(chunk, notifyTitle, notifyMessage, notifyType)
+                .catch(e => console.error('Bulk notification chunk error:', e))
+        );
+    }
+    // Let notifications flush in the background
+    Promise.all(notifyPromises);
 
     res.status(200).json({
         status: 'success',
-        message: `Successfully ${status === 'ACTIVE' ? 'activated' : 'suspended'} ${safeUserIds.length} users.`,
-        data: { updatedCount: safeUserIds.length, ignoredCount: userIds.length - safeUserIds.length }
+        message: `Successfully ${isSuspended ? 'suspended' : 'activated'} ${safeUserIds.length} users.`,
+        data: { updatedCount: safeUserIds.length }
     });
 });
 
