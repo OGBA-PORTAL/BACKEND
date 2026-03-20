@@ -16,7 +16,7 @@ export const getAllResults = catchAsync(async (req: Request, res: Response, next
             exams:examId (title, passMark)
         `)
         .eq('status', 'SUBMITTED')
-        .order('score', { ascending: false });
+        .order('submittedAt', { ascending: false });
 
     // Apply Filters
     if (examId) query = query.eq('examId', examId);
@@ -69,7 +69,7 @@ export const getChurchResults = catchAsync(async (req: Request, res: Response, n
         .eq('users.churchId', churchId)
         .eq('exams.resultsReleased', true)
         .eq('status', 'SUBMITTED')
-        .order('score', { ascending: false });
+        .order('submittedAt', { ascending: false });
 
     if (examId) query = query.eq('examId', examId);
 
@@ -95,7 +95,8 @@ export const getMyResults = catchAsync(async (req: Request, res: Response, next:
             *,
             exams:examId (title, passMark, resultsReleased)
         `)
-        .eq('userId', userId);
+        .eq('userId', userId)
+        .order('submittedAt', { ascending: false });
 
     if (error) return next(new AppError(error.message, 500));
 
