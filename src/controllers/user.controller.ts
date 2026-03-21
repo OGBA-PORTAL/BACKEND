@@ -4,6 +4,7 @@ import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/AppError.js';
 import bcrypt from 'bcrypt';
 import { NotificationService } from '../services/notification.service.js';
+import { logAudit } from '../utils/auditLogger.js';
 
 // GET /users/me
 export const getMe = (req: Request, res: Response) => {
@@ -433,5 +434,74 @@ export const updateUserAdmin = catchAsync(async (req: Request, res: Response, ne
         status: 'success',
         message: 'Profile updated successfully.',
         data: { user: updated }
+    });
+});
+
+// PATCH /users/:id/force-password-reset — Admin: Force change a user's password
+export const forceResetPassword = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+        return next(new AppError('Please provide a new password with at least 6 characters.', 400));
+    }
+
+    if (id === req.user.id) {
+        return next(new AppError('Please use your own profile settings to change your password.', 400));
+    }
+
+    // Fetch the target user's role and churchId
+    const { data: targetUser, error: fetchError } = await supabase
+        .from('users')
+        .select('id, role, churchId')
+        .eq('id', id)
+        .single();
+
+    if (fetchError || !targetUser) return next(new AppError('User not found', 404));
+
+    const callerRole = req.user.role;
+    const targetRole = targetUser.role;
+
+    // Hierarchy enforcement
+    let hasPermission = false;
+
+    if (callerRole === 'SYSTEM_ADMIN') {
+        hasPermission = true;
+    } else if (callerRole === 'ASSOCIATION_OFFICER' || callerRole === 'GLOBAL_ADMIN') {
+        if (['RA', 'CHURCH_ADMIN'].includes(targetRole)) {
+            hasPermission = true;
+        }
+    } else if (callerRole === 'CHURCH_ADMIN') {
+        if (targetRole === 'RA' && targetUser.churchId === req.user.churchId) {
+            hasPermission = true;
+        }
+    }
+
+    if (!hasPermission) {
+        return next(new AppError(`You do not have permission to reset the password for this ${targetRole.replace(/_/g, ' ')}.`, 403));
+    }
+
+    // Hash the new password
+    const hashed = await bcrypt.hash(newPassword, 12);
+
+    // Update password
+    const { error: updateError } = await supabase
+        .from('users')
+        .update({ password: hashed })
+        .eq('id', id);
+
+    if (updateError) return next(new AppError(updateError.message, 500));
+
+    logAudit({
+        userId: req.user.id,
+        action: 'FORCE_PASSWORD_RESET',
+        resourceId: id as string,
+        resource: 'USER',
+        details: { targetRole }
+    });
+
+    res.status(200).json({
+        status: 'success',
+        message: 'Password forcefully reset successfully.'
     });
 });

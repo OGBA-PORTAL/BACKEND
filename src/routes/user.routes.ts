@@ -20,5 +20,6 @@ router.patch('/:id/status', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATI
 router.delete('/:id', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.deleteUser);
 router.patch('/:id/role', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserRole);
 router.patch('/:id/admin', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER'), userController.updateUserAdmin);
+router.patch('/:id/force-password-reset', authMiddleware.restrictTo('SYSTEM_ADMIN', 'ASSOCIATION_OFFICER', 'GLOBAL_ADMIN', 'CHURCH_ADMIN'), userController.forceResetPassword);
 
 export default router;
