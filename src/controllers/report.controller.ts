@@ -16,10 +16,18 @@ export const getGlobalReport = catchAsync(async (req: Request, res: Response, ne
 
     if (error) return next(new AppError(error.message, 500));
 
+    // Enhance raw attempts with live pass/fail logic
+    const enhancedAttempts = attempts.map(a => {
+        const didPass = a.score !== null && a.exams?.passMark !== undefined
+            ? a.score >= a.exams.passMark
+            : (a.passed ?? false);
+        return { ...a, _livePassed: didPass };
+    });
+
     // Grouping Logic: Church -> Exam -> Rank -> Users
     const report: any = {};
 
-    attempts.forEach(a => {
+    enhancedAttempts.forEach(a => {
         const churchName = a.users?.churches?.name || 'Unknown Church';
         const examTitle = a.exams?.title || 'Unknown Exam';
         const rankName = a.users?.ranks?.name || 'Unknown Rank';
@@ -34,10 +42,7 @@ export const getGlobalReport = catchAsync(async (req: Request, res: Response, ne
         }
 
         const group = report[churchName][examTitle][rankName];
-        // Compute pass/fail live from score vs passMark (avoids relying on stale `passed` column)
-        const didPass = a.score !== null && a.exams?.passMark !== undefined
-            ? a.score >= a.exams.passMark
-            : (a.passed ?? false);
+        const didPass = a._livePassed;
 
         group.members.push({
             attemptId: a.id,
@@ -55,7 +60,7 @@ export const getGlobalReport = catchAsync(async (req: Request, res: Response, ne
         group.stats.avgScore = Math.round(group.stats.totalScore / group.stats.total);
     });
 
-    res.status(200).json({ status: 'success', data: { report } });
+    res.status(200).json({ status: 'success', data: { report, rawData: enhancedAttempts } });
 });
 
 export const getChurchReport = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -75,10 +80,18 @@ export const getChurchReport = catchAsync(async (req: Request, res: Response, ne
 
     if (error) return next(new AppError(error.message, 500));
 
+    // Enhance raw attempts
+    const enhancedAttempts = attempts.map(a => {
+        const didPass = a.score !== null && a.exams?.passMark !== undefined
+            ? a.score >= a.exams.passMark
+            : (a.passed ?? false);
+        return { ...a, _livePassed: didPass };
+    });
+
     // Grouping Logic for Church: Exam -> Rank -> Users
     const report: any = {};
 
-    attempts.forEach(a => {
+    enhancedAttempts.forEach(a => {
         const examTitle = a.exams?.title || 'Unknown Exam';
         const rankName = a.users?.ranks?.name || 'Unknown Rank';
 
@@ -91,10 +104,7 @@ export const getChurchReport = catchAsync(async (req: Request, res: Response, ne
         }
 
         const group = report[examTitle][rankName];
-        // Compute pass/fail live from score vs passMark (avoids relying on stale `passed` column)
-        const didPass = a.score !== null && a.exams?.passMark !== undefined
-            ? a.score >= a.exams.passMark
-            : (a.passed ?? false);
+        const didPass = a._livePassed;
 
         group.members.push({
             attemptId: a.id,
@@ -112,5 +122,5 @@ export const getChurchReport = catchAsync(async (req: Request, res: Response, ne
         group.stats.avgScore = Math.round(group.stats.totalScore / group.stats.total);
     });
 
-    res.status(200).json({ status: 'success', data: { report } });
+    res.status(200).json({ status: 'success', data: { report, rawData: enhancedAttempts } });
 });
