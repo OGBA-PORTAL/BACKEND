@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase.js';
 import { catchAsync } from '../utils/catchAsync.js';
 import { AppError } from '../utils/AppError.js';
 import { logAudit } from '../utils/auditLogger.js';
+import { NotificationService } from '../services/notification.service.js';
 
 // 1. Get All Results (Admin View - Filterable)
 export const getAllResults = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
@@ -68,6 +69,7 @@ export const getChurchResults = catchAsync(async (req: Request, res: Response, n
         `)
         .eq('users.churchId', churchId)
         .eq('exams.resultsReleased', true)
+        .eq('isWithheld', false) // Hide withheld results from church admins
         .eq('status', 'SUBMITTED')
         .order('submittedAt', { ascending: false });
 
@@ -100,9 +102,12 @@ export const getMyResults = catchAsync(async (req: Request, res: Response, next:
 
     if (error) return next(new AppError(error.message, 500));
 
-    // Obscure scores and pass/fail logic if results are NOT released
+    // Obscure scores and pass/fail logic if results are NOT released or result is WITHHELD
     const sanitizedResults = attempts.map(attempt => {
-        if (attempt.exams && attempt.exams.resultsReleased) {
+        const released = attempt.exams && attempt.exams.resultsReleased;
+        const withheld = attempt.isWithheld;
+
+        if (released && !withheld) {
             return {
                 ...attempt,
                 statusDisplay: attempt.passed ? 'Passed' : 'Failed'
@@ -114,7 +119,7 @@ export const getMyResults = catchAsync(async (req: Request, res: Response, next:
             score: null,          // Hidden
             totalPoints: null,    // Hidden
             passed: null,         // Hidden
-            statusDisplay: 'Submitted'
+            statusDisplay: withheld ? 'Withheld' : 'Submitted'
         };
     });
 
@@ -216,15 +221,15 @@ export const getDetailedResult = catchAsync(async (req: Request, res: Response, 
         if (attempt.users?.churchId !== req.user.churchId) {
             return next(new AppError('You are not authorized to view this result.', 403));
         }
-        if (!attempt.exams?.resultsReleased) {
-            return next(new AppError('This result has not been released yet.', 403));
+        if (!attempt.exams?.resultsReleased || attempt.isWithheld) {
+            return next(new AppError('This result is not available for viewing.', 403));
         }
     } else if (req.user.role === 'RA') {
         if (attempt.userId !== req.user.id) {
             return next(new AppError('You are not authorized to view this result.', 403));
         }
-        if (!attempt.exams?.resultsReleased) {
-            return next(new AppError('This result has not been released yet.', 403));
+        if (!attempt.exams?.resultsReleased || attempt.isWithheld) {
+            return next(new AppError('This result is currently withheld or unreleased.', 403));
         }
     }
 
@@ -284,5 +289,174 @@ export const getDetailedResult = catchAsync(async (req: Request, res: Response, 
             attempt,
             questions: detailedQuestions
         }
+    });
+});
+
+// 6. Toggle Withhold Status (Admin Action)
+export const toggleWithhold = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { isWithheld } = req.body;
+
+    const { data: updated, error } = await supabase
+        .from('exam_attempts')
+        .update({ isWithheld })
+        .eq('id', id)
+        .select(`*, exams:examId(title), users:userId(id, firstName, lastName)`)
+        .single();
+
+    if (error) return next(new AppError(error.message, 500));
+
+    // Audit Log
+    await logAudit({
+        userId: req.user.id,
+        action: isWithheld ? 'WITHHOLD_RESULT' : 'UNWITHHOLD_RESULT',
+        resource: 'exam_attempts',
+        resourceId: id as string,
+        req
+    });
+
+    // Notify the student
+    if (isWithheld) {
+        NotificationService.notifyUsers(
+            [updated.userId],
+            'Result Withheld',
+            `Your result for ${Array.isArray(updated.exams) ? updated.exams[0]?.title : updated.exams?.title} has been withheld for review by the administrators.`,
+            'ALERT'
+        );
+    } else if (updated.exams?.resultsReleased) {
+        // Only notify about availability if the results are generally released
+        NotificationService.notifyUsers(
+            [updated.userId],
+            'Result Released',
+            `Your result for ${Array.isArray(updated.exams) ? updated.exams[0]?.title : updated.exams?.title} is now available.`,
+            'INFO'
+        );
+    }
+
+    res.status(200).json({
+        status: 'success',
+        data: { attempt: updated }
+    });
+});
+
+// 7. Update Assessment Scores (LTC/Hiking)
+export const updateAssessment = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { ltcScore, hikingScore } = req.body;
+
+    // Fetch attempt first to get examScore
+    const { data: attempt, error: fetchError } = await supabase
+        .from('exam_attempts')
+        .select(`*, exams:examId(title, passMark)`)
+        .eq('id', id)
+        .single();
+
+    if (fetchError || !attempt) return next(new AppError('Attempt not found', 404));
+
+    // Ensure scores are numbers to prevent NaN issues in DB
+    const cleanLtc = Number(ltcScore) || 0;
+    const cleanHiking = Number(hikingScore) || 0;
+
+    const examCore = (attempt.examScore || 0) * 0.8;
+    const finalScore = Math.round(examCore + cleanLtc + cleanHiking);
+    const examsObj = Array.isArray(attempt.exams) ? attempt.exams[0] : attempt.exams;
+    const passed = finalScore >= (examsObj?.passMark || 50);
+
+    const { data: updated, error } = await supabase
+        .from('exam_attempts')
+        .update({ 
+            ltcScore: cleanLtc, 
+            hikingScore: cleanHiking, 
+            score: finalScore,
+            passed 
+        })
+        .eq('id', id)
+        .select(`*, exams:examId(title)`)
+        .single();
+
+    if (error) {
+        console.error('Assessment update failed:', error);
+        return next(new AppError(error.message, 500));
+    }
+
+    if (!updated) return next(new AppError('Failed to retrieve updated record', 500));
+
+    // Audit Log
+    await logAudit({
+        userId: req.user.id,
+        action: 'UPDATE_ASSESSMENT',
+        resource: 'exam_attempts',
+        resourceId: id as string,
+        req
+    });
+
+    // Notify the student
+    NotificationService.notifyUsers(
+        [updated.userId],
+        'Result Updated',
+        `Your final grade for ${Array.isArray(updated.exams) ? updated.exams[0]?.title : updated.exams?.title} has been updated following assessment review.`,
+        'INFO'
+    );
+
+    res.status(200).json({
+        status: 'success',
+        data: { attempt: updated }
+    });
+});
+
+// 8. Bulk Update Assessments
+export const bulkUpdateAssessments = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const { updates } = req.body; // Array of { id, ltcScore, hikingScore }
+
+    if (!Array.isArray(updates)) {
+        return next(new AppError('Invalid updates format', 400));
+    }
+
+    const results = await Promise.all(updates.map(async (u) => {
+        const { id, ltcScore, hikingScore } = u;
+
+        // Fetch examScore and passMark
+        const { data: attempt } = await supabase
+            .from('exam_attempts')
+            .select(`examScore, exams:examId(passMark)`)
+            .eq('id', id)
+            .single();
+
+        if (!attempt) return null;
+
+        const examCore = (attempt.examScore || 0) * 0.8;
+        const finalScore = Math.round(examCore + (ltcScore || 0) + (hikingScore || 0));
+        const examsObj = Array.isArray(attempt.exams) ? attempt.exams[0] : attempt.exams;
+        const passed = finalScore >= (examsObj?.passMark || 50);
+
+        const { data: updated } = await supabase
+            .from('exam_attempts')
+            .update({ 
+                ltcScore, 
+                hikingScore, 
+                score: finalScore,
+                passed 
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        return updated;
+    }));
+
+    // Filter out nulls and Audit Log
+    const successful = results.filter(r => r !== null);
+    
+    await logAudit({
+        userId: req.user.id,
+        action: 'BULK_UPDATE_ASSESSMENT',
+        resource: 'exam_attempts',
+        details: { count: successful.length },
+        req
+    });
+
+    res.status(200).json({
+        status: 'success',
+        data: { count: successful.length }
     });
 });

@@ -279,13 +279,16 @@ export const submitAttempt = catchAsync(async (req: Request, res: Response, next
     // Calculate total possible points (sum of all assigned questions)
     const maxScore = questions.reduce((sum, q) => sum + q.points, 0);
     const percentageScore = maxScore > 0 ? Math.round((rawScore / maxScore) * 100) : 0;
-    const passed = percentageScore >= (attempt.exams?.passMark || 0);
+    // Calculate Passing Status (based on weighted score)
+    const initialWeightedScore = Math.round(percentageScore * 0.8);
+    const passed = initialWeightedScore >= (attempt.exams?.passMark || 50);
 
     // Update Attempt
     const { data: updatedAttempt, error: updateError } = await supabase
         .from('exam_attempts')
         .update({
-            score: percentageScore,
+            examScore: percentageScore, // Store original raw percentage
+            score: Math.round(percentageScore * 0.8), // Initial weighted score (LTC/Hiking 0)
             totalPoints: maxScore,
             status: 'SUBMITTED',
             submittedAt: new Date().toISOString(),

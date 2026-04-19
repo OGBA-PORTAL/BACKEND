@@ -12,6 +12,7 @@ export const getGlobalReport = catchAsync(async (req: Request, res: Response, ne
             users:userId!inner (firstName, lastName, raNumber, churchId, rankId, churches:churchId(name), ranks:rankId(name, level)),
             exams:examId!inner (title, passMark)
         `)
+        .eq('isWithheld', false)
         .eq('status', 'SUBMITTED');
 
     if (error) return next(new AppError(error.message, 500));
@@ -76,6 +77,7 @@ export const getChurchReport = catchAsync(async (req: Request, res: Response, ne
         `)
         .eq('users.churchId', churchId)
         .eq('exams.resultsReleased', true) // Church admins only see released reports
+        .eq('isWithheld', false)
         .eq('status', 'SUBMITTED');
 
     if (error) return next(new AppError(error.message, 500));
